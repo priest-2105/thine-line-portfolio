@@ -32,83 +32,163 @@ function App() {
     // Set a clear color to distinguish black scene from render failure
     renderer.setClearColor(0x87CEEB); // Sky blue background
 
-    // Add basic lighting to ensure the model is visible
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Soft white light
+    // Add basic lighting to ensure the model is visible (adjusted for office materials)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1); // Bright white light
-    directionalLight.position.set(5, 10, 5); // Position above and in front
-    directionalLight.castShadow = true; // Enable shadows
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    directionalLight.position.set(6.31, 10, 5); // Above scene center
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    // Debug helper to visualize scene axes
-    scene.add(new THREE.AxesHelper(5));
+    // Debug helper to visualize scene axes (at scene center)
+    const axesHelper = new THREE.AxesHelper(5);
+    axesHelper.position.set(6.31, 1.11, 0.22);
+    scene.add(axesHelper);
 
     // Load model
     let loadedScene = null;
+    const sceneCenter = new THREE.Vector3(6.31, 1.11, 0.22);
 
     const loader = new GLTFLoader();
     let gltfCameras = [];
     let activeCameraIndex = 0;
-    
-    // Camera animation variables (commented out)
-    // let isAnimating = true;
-    // let animationStartTime = 0;
-    // const animationDuration = 5000; 
-    // const animationDistance = 10;
-    // let originalCameraPosition = null;
+
+    // Raycaster for clicking
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
     loader.load(
       '/models/office.glb',
       (gltf) => {
         loadedScene = gltf.scene;
-        
         scene.add(loadedScene);
+
+        // Center the scene
+        loadedScene.position.sub(sceneCenter);
+
+        // Debug: Log GLTF data
+        console.log('GLTF object:', gltf);
+        console.log('GLTF cameras:', gltf.cameras);
+
         // Find cameras in the GLB
         if (gltf.cameras && gltf.cameras.length > 0) {
           gltfCameras = gltf.cameras;
-          camera = gltfCameras[0];
+          // Prioritize primary camera by name 'Camera'
+          activeCameraIndex = gltfCameras.findIndex(cam => cam.name === 'Camera') !== -1 
+            ? gltfCameras.findIndex(cam => cam.name === 'Camera') 
+            : 0;
+          camera = gltfCameras[activeCameraIndex];
           camera.aspect = window.innerWidth / window.innerHeight;
           camera.updateProjectionMatrix();
-          console.log('Using GLB camera:', camera.name || 0);
+          console.log(`Using GLB camera ${activeCameraIndex}:`, camera.name || activeCameraIndex);
+
+          // Log all available cameras
+          console.log('Available GLB cameras:');
+          gltfCameras.forEach((cam, idx) => {
+            console.log(`  Camera ${idx}: ${cam.name || 'Unnamed'} - Position: ${cam.position.toArray().map(n => n.toFixed(2))}, Rotation: ${cam.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
+          });
+
+          // Expose camera switching
+          window.__gltfCameras = gltfCameras;
+          window.__setActiveCamera = (idx) => {
+            if (gltfCameras[idx]) {
+              activeCameraIndex = idx;
+              camera = gltfCameras[idx];
+              camera.aspect = window.innerWidth / window.innerHeight;
+              camera.updateProjectionMatrix();
+              // Debug: Log camera details after switch
+              console.log(`Switched to camera ${idx}: ${camera.name || idx}`);
+              console.log(`Camera position: ${camera.position.toArray().map(n => n.toFixed(2))}`);
+              console.log(`Camera rotation: ${camera.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
+            } else {
+              console.log(`Camera ${idx} not found`);
+            }
+          };
         } else {
-          // Fallback to default camera
-          camera.position.set(0, 2, 5);
-          camera.lookAt(0, 0, 0);
+          // Improved fallback camera
+          camera.position.set(sceneCenter.x - 5, sceneCenter.y + 3, sceneCenter.z + 8);
+          camera.lookAt(sceneCenter);
+          console.log('No GLB cameras found, using improved fallback camera at position:', camera.position.toArray());
         }
-        
-        // Store original camera position for animation (commented out)
-        // originalCameraPosition = camera.position.clone();
-        // Save to ref for switching (commented out)
-        // window.__gltfCameras = gltfCameras;
-        // window.__setActiveCamera = (idx) => {
-        //   if (gltfCameras[idx]) {
-        //     camera = gltfCameras[idx];
-        //     camera.aspect = window.innerWidth / window.innerHeight;
-        //     camera.updateProjectionMatrix();
-        //     activeCameraIndex = idx;
-        //     // Update original position for animation
-        //     originalCameraPosition = camera.position.clone();
-        //     console.log('Switched to camera', idx, camera.name);
-        //   }
-        // };
-        
-        // Expose animation controls to window for debugging (commented out)
-        // window.__startCameraAnimation = () => {
-        //   if (!isAnimating) {
-        //     isAnimating = true;
-        //     animationStartTime = Date.now();
-        //     console.log('Starting camera animation');
-        //   }
-        // };
-        // window.__stopCameraAnimation = () => {
-        //   isAnimating = false;
-        //   if (originalCameraPosition) {
-        //     camera.position.copy(originalCameraPosition);
-        //     camera.lookAt(0, camera.position.y, 0);
-        //   }
-        //   console.log('Stopped camera animation');
-        // };
+
+        // Click handler for monitor
+        const handleClick = (event) => {
+          event.preventDefault();
+          // Calculate mouse position in normalized device coordinates (-1 to +1)
+          mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+          // Update raycaster
+          raycaster.setFromCamera(mouse, camera);
+
+          // Find monitor-related objects (broader search)
+          const monitorObjects = [];
+          loadedScene.traverse((child) => {
+            if (child.isMesh && (
+              child.name.toLowerCase().includes('monitor') ||
+              child.name.toLowerCase().includes('screen') ||
+              child.name === 'Lid_Screen_0' ||
+              child.name === 'monitor_12' ||
+              child.name === 'Laptop.001_Surface.001_0'
+            )) {
+              monitorObjects.push(child);
+            }
+          });
+
+          // Log all clickable objects for debugging
+          console.log('Clickable monitor objects:', monitorObjects.map(obj => obj.name));
+
+          const intersects = raycaster.intersectObjects(monitorObjects, true);
+
+          if (intersects.length > 0) {
+            console.log('Clicked monitor:', intersects[0].object.name);
+            if (gltfCameras.length > 1) {
+              const newIndex = activeCameraIndex === 0 ? 1 : 0;
+              window.__setActiveCamera(newIndex);
+            } else {
+              console.log('Second camera not available');
+            }
+          } else {
+            // Proximity check: Find monitor's position and check if click is near
+            let monitorObject = monitorObjects.find(obj => obj.name === 'monitor_12' || obj.name === 'Lid_Screen_0');
+            if (!monitorObject) {
+              monitorObject = monitorObjects[0]; // Fallback to any monitor-like object
+            }
+            if (monitorObject) {
+              const monitorPos = new THREE.Vector3();
+              monitorObject.getWorldPosition(monitorPos);
+              const clickRay = raycaster.ray;
+              const distance = clickRay.distanceToPoint(monitorPos);
+              console.log(`Click distance from monitor (${monitorObject.name}): ${distance.toFixed(2)} units`);
+              if (distance < 3) {
+                console.log('Clicked near monitor:', monitorObject.name);
+                if (gltfCameras.length > 1) {
+                  // Toggle between primary (0) and second camera (1)
+                  const newIndex = activeCameraIndex === 0 ? 1 : 0;
+                  window.__setActiveCamera(newIndex);
+                } else {
+                  console.log('Second camera not available');
+                }
+              } else {
+                console.log('No monitor clicked, too far:', distance.toFixed(2));
+              }
+            } else {
+              console.log('No monitor objects found for proximity check');
+            }
+          }
+        };
+        window.addEventListener('click', handleClick);
+
+        // Cleanup click handler
+        return () => {
+          window.removeEventListener('click', handleClick);
+        };
       },
-      undefined,
+      (progress) => {
+        console.log(`Loading progress: ${(progress.loaded / progress.total * 100).toFixed(2)}%`);
+      },
       (error) => {
         console.error('Error loading GLB:', error);
       }
@@ -128,90 +208,15 @@ function App() {
     };
     window.addEventListener('resize', handleResize);
 
-    // Camera animation function (commented out)
-    // const animateCamera = () => {
-    //   if (isAnimating && originalCameraPosition) {
-    //     const elapsed = Date.now() - animationStartTime;
-    //     const progress = Math.min(elapsed / animationDuration, 1);
-    //     
-    //     // Use easing function for smooth animation (ease-in-out)
-    //     const easedProgress = progress < 0.5 
-    //       ? 2 * progress * progress 
-    //       : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-    //     
-    //     // Calculate new position (left to right movement)
-    //     const newX = originalCameraPosition.x + (easedProgress - 0.5) * animationDistance;
-    //     camera.position.x = newX;
-    //     
-    //     // Keep looking at the center of the scene
-    //     camera.lookAt(0, camera.position.y, 0);
-    //     
-    //     // Stop animation when complete
-    //     if (progress >= 1) {
-    //       isAnimating = false;
-    //     }
-    //   }
-    // };
-
     function animate() {
       requestAnimationFrame(animate);
-      // animateCamera(); // commented out
       renderer.render(scene, camera);
     }
     animate();
 
-    // Start camera animation on click (commented out)
-    // const handleClick = () => {
-    //   if (!isAnimating) {
-    //     // Start the left-to-right animation
-    //     isAnimating = true;
-    //     animationStartTime = Date.now();
-    //     console.log('Starting camera animation');
-    //   } else {
-    //     // Stop animation and reset to original position
-    //     isAnimating = false;
-    //     if (originalCameraPosition) {
-    //       camera.position.copy(originalCameraPosition);
-    //       camera.lookAt(0, camera.position.y, 0);
-    //     }
-    //     console.log('Stopped camera animation');
-    //   }
-    // };
-    // window.addEventListener('click', handleClick);
-    
-    // Keyboard controls (commented out)
-    // const handleKeyPress = (event) => {
-    //   switch(event.key.toLowerCase()) {
-    //     case ' ':
-    //       event.preventDefault();
-    //       handleClick(); // Same as click
-    //       break;
-    //     case 'r':
-    //       // Reset camera to original position
-    //       isAnimating = false;
-    //       if (originalCameraPosition) {
-    //         camera.position.copy(originalCameraPosition);
-    //         camera.lookAt(0, camera.position.y, 0);
-    //       }
-    //       console.log('Reset camera position');
-    //       break;
-    //     case 'a':
-    //       // Start animation
-    //       if (!isAnimating) {
-    //         isAnimating = true;
-    //         animationStartTime = Date.now();
-    //         console.log('Starting camera animation');
-    //       }
-    //       break;
-    //   }
-    // };
-    // window.addEventListener('keydown', handleKeyPress);
-
     // Clean up on unmount
     return () => {
       window.removeEventListener('resize', handleResize);
-      // window.removeEventListener('click', handleClick); // commented out
-      // window.removeEventListener('keydown', handleKeyPress); // commented out
       renderer.dispose();
       if (loadedScene) {
         scene.remove(loadedScene);
