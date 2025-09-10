@@ -52,15 +52,22 @@ function App() {
     const sceneCenter = new THREE.Vector3(6.31, 1.11, 0.22);
     const loader = new GLTFLoader();
     let gltfCameras = [];
-    let activeCameraIndex = 0; 
-    let isAnimating = false;
-    let animationStartTime = null;
+    let activeCameraIndex = 0;
+    let isAnimatingPosition = false;
+    let isAnimatingRotation = false;
+    let positionAnimationStartTime = null;
+    let rotationAnimationStartTime = null;
     let startPosition = new THREE.Vector3();
-    let startQuaternion = new THREE.Quaternion();
     let targetPosition = new THREE.Vector3();
+    let startQuaternion = new THREE.Quaternion();
     let targetQuaternion = new THREE.Quaternion();
     let originalPosition = null;
     let originalQuaternion = null;
+
+    // Easing function for smooth transitions
+    function easeInOutQuad(t) {
+      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    }
 
     loader.load(
       '/models/office.glb',
@@ -80,12 +87,11 @@ function App() {
           cameraRef.current = gltfCameras[activeCameraIndex];
           cameraRef.current.aspect = window.innerWidth / window.innerHeight;
           cameraRef.current.updateProjectionMatrix();
-          // Store original position and rotation
           originalPosition = cameraRef.current.position.clone();
           originalQuaternion = cameraRef.current.quaternion.clone();
           console.log(`Using GLB camera ${activeCameraIndex}:`, cameraRef.current.name || activeCameraIndex);
-          console.log(`Camera position: ${cameraRef.current.position.toArray().map(n => n.toFixed(2))}`);
-          console.log(`Camera rotation: ${cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
+          console.log(`First camera position: ${cameraRef.current.position.toArray().map(n => n.toFixed(2))}`);
+          console.log(`First camera rotation: ${cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
 
           console.log('Available GLB cameras:');
           gltfCameras.forEach((cam, idx) => {
@@ -101,30 +107,28 @@ function App() {
           console.log('No GLB cameras found, using fallback camera at position:', cameraRef.current.position.toArray());
         }
 
-        // Click handler for the center div
         const handleDivClick = () => {
-          if (isAnimating) {
+          if (isAnimatingPosition || isAnimatingRotation) {
             console.log('Animation in progress, ignoring click');
             return;
           }
           console.log('Center div clicked');
           if (gltfCameras.length > 1) {
-            isAnimating = true;
-            animationStartTime = performance.now();
+            isAnimatingPosition = true;
+            positionAnimationStartTime = performance.now();
             startPosition.copy(cameraRef.current.position);
             startQuaternion.copy(cameraRef.current.quaternion);
             if (activeCameraIndex === 0) {
-              // Move to second camera's position and rotation
-              targetPosition.set(0.04, 1.24, 0.73); // second camera position
-              targetQuaternion.copy(gltfCameras[1].quaternion);
+              targetPosition.set(0.04, 1.24, 0.73);
+              targetQuaternion = gltfCameras[1].quaternion.clone();
               activeCameraIndex = 1;
               console.log('Animating to second camera position:', targetPosition.toArray().map(n => n.toFixed(2)));
+              console.log('Will start rotation animation at 50% to:', gltfCameras[1].rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
             } else {
-              // Move back to original position and rotation
               targetPosition.copy(originalPosition);
               targetQuaternion.copy(originalQuaternion);
               activeCameraIndex = 0;
-              console.log('Animating to original position:', targetPosition.toArray().map(n => n.toFixed(2)));
+              console.log('Animating to first camera position and rotation:', targetPosition.toArray().map(n => n.toFixed(2)));
             }
           } else {
             console.log('Second camera not available');
@@ -164,15 +168,46 @@ function App() {
 
     function animate() {
       requestAnimationFrame(animate);
-      if (isAnimating) {
-        const elapsed = (performance.now() - animationStartTime) / 1000;
-        const t = Math.min(elapsed / 2, 1); 
-        cameraRef.current.position.lerpVectors(startPosition, targetPosition, t);
-        cameraRef.current.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, t);
+      if (isAnimatingPosition) {
+        const elapsed = (performance.now() - positionAnimationStartTime) / 1000;
+        const positionT = Math.min(elapsed / 3, 1); // 3-second position animation
+        const easedPositionT = easeInOutQuad(positionT);
+        cameraRef.current.position.lerpVectors(startPosition, targetPosition, easedPositionT);
+        
+        // Start rotation at 50% of position animation (1.5 seconds) for second camera
+        if (activeCameraIndex === 1 && !isAnimatingRotation && elapsed >= 1.5) {
+          isAnimatingRotation = true;
+          rotationAnimationStartTime = performance.now();
+          startQuaternion.copy(cameraRef.current.quaternion);
+          console.log('Starting rotation animation to:', targetQuaternion.toArray().map(n => n.toFixed(2)));
+        }
+
+        if (positionT === 1) {
+          isAnimatingPosition = false;
+          console.log('Position animation complete, camera at:', cameraRef.current.position.toArray().map(n => n.toFixed(2)));
+        }
+      }
+      if (isAnimatingRotation) {
+        const rotationElapsed = (performance.now() - rotationAnimationStartTime) / 1000;
+        const rotationT = Math.min(rotationElapsed / 1.5, 1); // 1.5-second rotation animation
+        const easedRotationT = easeInOutQuad(rotationT);
+        cameraRef.current.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, easedRotationT);
+        if (rotationT === 1) {
+          isAnimatingRotation = false;
+          console.log('Rotation animation complete, rotation at:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
+        }
+      }
+      // For returning to first camera, animate position and rotation together
+      if (activeCameraIndex === 0 && isAnimatingPosition) {
+        const elapsed = (performance.now() - positionAnimationStartTime) / 1000;
+        const t = Math.min(elapsed / 2, 1); // 2-second animation
+        const easedT = easeInOutQuad(t);
+        cameraRef.current.position.lerpVectors(startPosition, targetPosition, easedT);
+        cameraRef.current.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, easedT);
         if (t === 1) {
-          isAnimating = false;
+          isAnimatingPosition = false;
           console.log('Animation complete, camera at:', cameraRef.current.position.toArray().map(n => n.toFixed(2)));
-          console.log('Camera rotation:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
+          console.log('Rotation at:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
         }
       }
       renderer.render(scene, cameraRef.current);
