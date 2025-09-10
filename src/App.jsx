@@ -5,6 +5,8 @@ import './App.css';
 
 function App() {
   const mountRef = useRef(null);
+  const clickDivRef = useRef(null);
+  const cameraRef = useRef(null);
 
   useEffect(() => {
     const scene = new THREE.Scene();
@@ -15,6 +17,8 @@ function App() {
       0.1,
       1000
     );
+    cameraRef.current = camera;
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.domElement.style.display = 'block';
@@ -24,166 +28,117 @@ function App() {
     mountRef.current.style.height = '100vh';
     mountRef.current.style.overflow = 'hidden';
     mountRef.current.style.margin = '0';
+    mountRef.current.style.position = 'relative';
     mountRef.current.appendChild(renderer.domElement);
 
-    // Enable shadow mapping for better lighting visuals
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // Set a clear color to distinguish black scene from render failure
-    renderer.setClearColor(0x87CEEB); // Sky blue background
+    renderer.setClearColor(0x87CEEB);
 
-    // Add basic lighting to ensure the model is visible (adjusted for office materials)
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    directionalLight.position.set(6.31, 10, 5); // Above scene center
+    directionalLight.position.set(6.31, 10, 5);
     directionalLight.castShadow = true;
     directionalLight.shadow.mapSize.width = 2048;
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    // Debug helper to visualize scene axes (at scene center)
     const axesHelper = new THREE.AxesHelper(5);
     axesHelper.position.set(6.31, 1.11, 0.22);
     scene.add(axesHelper);
 
-    // Load model
     let loadedScene = null;
     const sceneCenter = new THREE.Vector3(6.31, 1.11, 0.22);
-
     const loader = new GLTFLoader();
     let gltfCameras = [];
-    let activeCameraIndex = 0;
-
-    // Raycaster for clicking
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
+    let activeCameraIndex = 0; 
+    let isAnimating = false;
+    let animationStartTime = null;
+    let startPosition = new THREE.Vector3();
+    let startQuaternion = new THREE.Quaternion();
+    let targetPosition = new THREE.Vector3();
+    let targetQuaternion = new THREE.Quaternion();
+    let originalPosition = null;
+    let originalQuaternion = null;
 
     loader.load(
       '/models/office.glb',
       (gltf) => {
         loadedScene = gltf.scene;
         scene.add(loadedScene);
-
-        // Center the scene
         loadedScene.position.sub(sceneCenter);
 
-        // Debug: Log GLTF data
         console.log('GLTF object:', gltf);
         console.log('GLTF cameras:', gltf.cameras);
 
-        // Find cameras in the GLB
         if (gltf.cameras && gltf.cameras.length > 0) {
           gltfCameras = gltf.cameras;
-          // Prioritize primary camera by name 'Camera'
           activeCameraIndex = gltfCameras.findIndex(cam => cam.name === 'Camera') !== -1 
             ? gltfCameras.findIndex(cam => cam.name === 'Camera') 
             : 0;
-          camera = gltfCameras[activeCameraIndex];
-          camera.aspect = window.innerWidth / window.innerHeight;
-          camera.updateProjectionMatrix();
-          console.log(`Using GLB camera ${activeCameraIndex}:`, camera.name || activeCameraIndex);
+          cameraRef.current = gltfCameras[activeCameraIndex];
+          cameraRef.current.aspect = window.innerWidth / window.innerHeight;
+          cameraRef.current.updateProjectionMatrix();
+          // Store original position and rotation
+          originalPosition = cameraRef.current.position.clone();
+          originalQuaternion = cameraRef.current.quaternion.clone();
+          console.log(`Using GLB camera ${activeCameraIndex}:`, cameraRef.current.name || activeCameraIndex);
+          console.log(`Camera position: ${cameraRef.current.position.toArray().map(n => n.toFixed(2))}`);
+          console.log(`Camera rotation: ${cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
 
-          // Log all available cameras
           console.log('Available GLB cameras:');
           gltfCameras.forEach((cam, idx) => {
             console.log(`  Camera ${idx}: ${cam.name || 'Unnamed'} - Position: ${cam.position.toArray().map(n => n.toFixed(2))}, Rotation: ${cam.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
           });
 
-          // Expose camera switching
           window.__gltfCameras = gltfCameras;
-          window.__setActiveCamera = (idx) => {
-            if (gltfCameras[idx]) {
-              activeCameraIndex = idx;
-              camera = gltfCameras[idx];
-              camera.aspect = window.innerWidth / window.innerHeight;
-              camera.updateProjectionMatrix();
-              // Debug: Log camera details after switch
-              console.log(`Switched to camera ${idx}: ${camera.name || idx}`);
-              console.log(`Camera position: ${camera.position.toArray().map(n => n.toFixed(2))}`);
-              console.log(`Camera rotation: ${camera.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2))}deg`);
-            } else {
-              console.log(`Camera ${idx} not found`);
-            }
-          };
         } else {
-          // Improved fallback camera
-          camera.position.set(sceneCenter.x - 5, sceneCenter.y + 3, sceneCenter.z + 8);
-          camera.lookAt(sceneCenter);
-          console.log('No GLB cameras found, using improved fallback camera at position:', camera.position.toArray());
+          cameraRef.current.position.set(sceneCenter.x - 5, sceneCenter.y + 3, sceneCenter.z + 8);
+          cameraRef.current.lookAt(sceneCenter);
+          originalPosition = cameraRef.current.position.clone();
+          originalQuaternion = cameraRef.current.quaternion.clone();
+          console.log('No GLB cameras found, using fallback camera at position:', cameraRef.current.position.toArray());
         }
 
-        // Click handler for monitor
-        const handleClick = (event) => {
-          event.preventDefault();
-          // Calculate mouse position in normalized device coordinates (-1 to +1)
-          mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-          mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-          // Update raycaster
-          raycaster.setFromCamera(mouse, camera);
-
-          // Find monitor-related objects (broader search)
-          const monitorObjects = [];
-          loadedScene.traverse((child) => {
-            if (child.isMesh && (
-              child.name.toLowerCase().includes('monitor') ||
-              child.name.toLowerCase().includes('screen') ||
-              child.name === 'Lid_Screen_0' ||
-              child.name === 'monitor_12' ||
-              child.name === 'Laptop.001_Surface.001_0'
-            )) {
-              monitorObjects.push(child);
-            }
-          });
-
-          // Log all clickable objects for debugging
-          console.log('Clickable monitor objects:', monitorObjects.map(obj => obj.name));
-
-          const intersects = raycaster.intersectObjects(monitorObjects, true);
-
-          if (intersects.length > 0) {
-            console.log('Clicked monitor:', intersects[0].object.name);
-            if (gltfCameras.length > 1) {
-              const newIndex = activeCameraIndex === 0 ? 1 : 0;
-              window.__setActiveCamera(newIndex);
+        // Click handler for the center div
+        const handleDivClick = () => {
+          if (isAnimating) {
+            console.log('Animation in progress, ignoring click');
+            return;
+          }
+          console.log('Center div clicked');
+          if (gltfCameras.length > 1) {
+            isAnimating = true;
+            animationStartTime = performance.now();
+            startPosition.copy(cameraRef.current.position);
+            startQuaternion.copy(cameraRef.current.quaternion);
+            if (activeCameraIndex === 0) {
+              // Move to second camera's position and rotation
+              targetPosition.set(0.04, 1.24, 0.73); // second camera position
+              targetQuaternion.copy(gltfCameras[1].quaternion);
+              activeCameraIndex = 1;
+              console.log('Animating to second camera position:', targetPosition.toArray().map(n => n.toFixed(2)));
             } else {
-              console.log('Second camera not available');
+              // Move back to original position and rotation
+              targetPosition.copy(originalPosition);
+              targetQuaternion.copy(originalQuaternion);
+              activeCameraIndex = 0;
+              console.log('Animating to original position:', targetPosition.toArray().map(n => n.toFixed(2)));
             }
           } else {
-            // Proximity check: Find monitor's position and check if click is near
-            let monitorObject = monitorObjects.find(obj => obj.name === 'monitor_12' || obj.name === 'Lid_Screen_0');
-            if (!monitorObject) {
-              monitorObject = monitorObjects[0]; // Fallback to any monitor-like object
-            }
-            if (monitorObject) {
-              const monitorPos = new THREE.Vector3();
-              monitorObject.getWorldPosition(monitorPos);
-              const clickRay = raycaster.ray;
-              const distance = clickRay.distanceToPoint(monitorPos);
-              console.log(`Click distance from monitor (${monitorObject.name}): ${distance.toFixed(2)} units`);
-              if (distance < 3) {
-                console.log('Clicked near monitor:', monitorObject.name);
-                if (gltfCameras.length > 1) {
-                  // Toggle between primary (0) and second camera (1)
-                  const newIndex = activeCameraIndex === 0 ? 1 : 0;
-                  window.__setActiveCamera(newIndex);
-                } else {
-                  console.log('Second camera not available');
-                }
-              } else {
-                console.log('No monitor clicked, too far:', distance.toFixed(2));
-              }
-            } else {
-              console.log('No monitor objects found for proximity check');
-            }
+            console.log('Second camera not available');
           }
         };
-        window.addEventListener('click', handleClick);
+        if (clickDivRef.current) {
+          clickDivRef.current.onclick = handleDivClick;
+          console.log('Click handler attached to div');
+        }
 
-        // Cleanup click handler
         return () => {
-          window.removeEventListener('click', handleClick);
+          if (clickDivRef.current) {
+            clickDivRef.current.onclick = null;
+          }
         };
       },
       (progress) => {
@@ -194,10 +149,9 @@ function App() {
       }
     );
 
-    // Handle window resize
     const handleResize = () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
+      cameraRef.current.aspect = window.innerWidth / window.innerHeight;
+      cameraRef.current.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.domElement.style.width = '100vw';
       renderer.domElement.style.height = '100vh';
@@ -210,11 +164,21 @@ function App() {
 
     function animate() {
       requestAnimationFrame(animate);
-      renderer.render(scene, camera);
+      if (isAnimating) {
+        const elapsed = (performance.now() - animationStartTime) / 1000;
+        const t = Math.min(elapsed / 2, 1); 
+        cameraRef.current.position.lerpVectors(startPosition, targetPosition, t);
+        cameraRef.current.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, t);
+        if (t === 1) {
+          isAnimating = false;
+          console.log('Animation complete, camera at:', cameraRef.current.position.toArray().map(n => n.toFixed(2)));
+          console.log('Camera rotation:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
+        }
+      }
+      renderer.render(scene, cameraRef.current);
     }
     animate();
 
-    // Clean up on unmount
     return () => {
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
@@ -240,7 +204,6 @@ function App() {
     };
   }, []);
 
-  // Prevent scrolling on body
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     document.body.style.margin = '0';
@@ -253,7 +216,23 @@ function App() {
   }, []);
 
   return (
-    <div ref={mountRef} style={{ width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0 }} />
+    <div ref={mountRef} style={{ width: '100vw', height: '100vh', overflow: 'hidden', margin: 0, padding: 0, position: 'relative' }}>
+      <div
+        ref={clickDivRef}
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: '100px',
+          height: '100px',
+          backgroundColor: 'red',
+          cursor: 'pointer',
+          zIndex: 10,
+          border: '2px solid black'
+        }}
+      />
+    </div>
   );
 }
 
