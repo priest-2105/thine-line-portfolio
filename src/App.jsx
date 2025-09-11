@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import './App.css';
@@ -7,6 +7,7 @@ function App() {
   const mountRef = useRef(null);
   const clickDivRef = useRef(null);
   const cameraRef = useRef(null);
+  const [divSize, setDivSize] = useState({ width: '500px', height: '600px' });
 
   useEffect(() => {
     const scene = new THREE.Scene();
@@ -128,7 +129,8 @@ function App() {
               targetPosition.copy(originalPosition);
               targetQuaternion.copy(originalQuaternion);
               activeCameraIndex = 0;
-              console.log('Animating to first camera position and rotation:', targetPosition.toArray().map(n => n.toFixed(2)));
+              console.log('Animating to first camera position:', targetPosition.toArray().map(n => n.toFixed(2)));
+              console.log('Will start rotation animation at 50% to:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
             }
           } else {
             console.log('Second camera not available');
@@ -174,8 +176,8 @@ function App() {
         const easedPositionT = easeInOutQuad(positionT);
         cameraRef.current.position.lerpVectors(startPosition, targetPosition, easedPositionT);
         
-        // Start rotation at 50% of position animation (1.5 seconds) for second camera
-        if (activeCameraIndex === 1 && !isAnimatingRotation && elapsed >= 1.5) {
+        // Start rotation at 50% of position animation (1.5 seconds)
+        if (!isAnimatingRotation && elapsed >= 1.5) {
           isAnimatingRotation = true;
           rotationAnimationStartTime = performance.now();
           startQuaternion.copy(cameraRef.current.quaternion);
@@ -185,6 +187,11 @@ function App() {
         if (positionT === 1) {
           isAnimatingPosition = false;
           console.log('Position animation complete, camera at:', cameraRef.current.position.toArray().map(n => n.toFixed(2)));
+          // Update div size after animation completes
+          setDivSize({
+            width: activeCameraIndex === 1 ? '90vw' : '500px',
+            height: activeCameraIndex === 1 ? '90vh' : '600px'
+          });
         }
       }
       if (isAnimatingRotation) {
@@ -195,19 +202,6 @@ function App() {
         if (rotationT === 1) {
           isAnimatingRotation = false;
           console.log('Rotation animation complete, rotation at:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
-        }
-      }
-      // For returning to first camera, animate position and rotation together
-      if (activeCameraIndex === 0 && isAnimatingPosition) {
-        const elapsed = (performance.now() - positionAnimationStartTime) / 1000;
-        const t = Math.min(elapsed / 2, 1); // 2-second animation
-        const easedT = easeInOutQuad(t);
-        cameraRef.current.position.lerpVectors(startPosition, targetPosition, easedT);
-        cameraRef.current.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, easedT);
-        if (t === 1) {
-          isAnimatingPosition = false;
-          console.log('Animation complete, camera at:', cameraRef.current.position.toArray().map(n => n.toFixed(2)));
-          console.log('Rotation at:', cameraRef.current.rotation.toArray().map(n => (n * 180 / Math.PI).toFixed(2)));
         }
       }
       renderer.render(scene, cameraRef.current);
@@ -256,15 +250,14 @@ function App() {
         ref={clickDivRef}
         style={{
           position: 'absolute',
-          top: '50%',
+          top: '40%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '100px',
-          height: '100px',
-          backgroundColor: 'red',
+          width: divSize.width,
+          height: divSize.height,
+          backgroundColor: 'transparent',
           cursor: 'pointer',
           zIndex: 10,
-          border: '2px solid black'
         }}
       />
     </div>
